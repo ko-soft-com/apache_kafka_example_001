@@ -1,0 +1,79 @@
+image: maven:3.9-eclipse-temurin-21
+
+stages:
+  - compile
+  - test
+  - security-scan
+  - build
+
+variables:
+  MAVEN_OPTS: "-Dmaven.repo.local=$CI_PROJECT_DIR/.m2/repository"
+
+compile:
+  stage: compile
+  script:
+    - mvn compile -B -q
+  cache:
+    key:
+      files:
+        - pom.xml
+    paths:
+      - .m2/repository/
+
+test:
+  stage: test
+  script:
+    - mvn test -B -q
+  cache:
+    key:
+      files:
+        - pom.xml
+    paths:
+      - .m2/repository/
+  artifacts:
+    reports:
+      junit: target/surefire-reports/TEST-*.xml
+    expire_in: 7 days
+
+security-scan:
+  stage: security-scan
+  needs: [compile]
+  script:
+    - mvn org.owasp:dependency-check-maven:check -DfailBuildOnCVSS=7
+  cache:
+    key:
+      files:
+        - pom.xml
+    paths:
+      - .m2/repository/
+  allow_failure: true
+  artifacts:
+    paths:
+      - target/dependency-check-report.html
+    expire_in: 30 days
+
+build:
+  stage: build
+  needs: [test]
+  script:
+    - |
+      mvn clean compile jib:build -B -q \
+        -Djib.to.image="$CI_REGISTRY_IMAGE:$IMAGE_TAG" \
+        -Djib.to.tags="$EXTRA_TAG" \
+        -Djib.to.auth.username="$CI_REGISTRY_USER" \
+        -Djib.to.auth.password="$CI_REGISTRY_PASSWORD"
+  cache:
+    key:
+      files:
+        - pom.xml
+    paths:
+      - .m2/repository/
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+      variables:
+        IMAGE_TAG: "dev"
+        EXTRA_TAG: "$CI_COMMIT_SHORT_SHA"
+    - if: '$CI_COMMIT_TAG'
+      variables:
+        IMAGE_TAG: "$CI_COMMIT_TAG"
+        EXTRA_TAG: "latest"
